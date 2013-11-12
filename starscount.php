@@ -29,6 +29,27 @@ Wordpress version supported: 3.6 and above
 
 define('STARSCOUNT_MAX_DEFAULT', 7);
 define('STARSCOUNT_STEP_DEFAULT', 50);
+define('STARSCOUNT_MANAGE_USERS', 1);
+
+if(is_admin()) {
+    // js
+    function starscount_js_enqueue_admin() {
+        wp_enqueue_script( 'jquery' );
+        wp_enqueue_script( 'starscount_admin_ajax', plugins_url('js/starscount-admin.js', __FILE__) );
+    }
+    add_action('admin_head', 'starscount_js_enqueue_admin');
+
+    if(STARSCOUNT_MANAGE_USERS) {
+        add_filter( 'manage_users_columns', array('WP_Starscount','users_admin_columns') );
+        add_filter( 'manage_users_custom_column', array('WP_Starscount','users_admin_columns_content'), 10, 3 );
+
+        add_action('wp_ajax_starscount_ajax_change_init', array('WP_Starscount', 'ajax_change_init'));
+    }
+}
+
+//@todo functions for inc/dec stars
+//@todo recalc user posts function for inc/dec stars
+//@todo replace shortcode to show stars
 
 class WP_Starscount {
 
@@ -41,7 +62,9 @@ class WP_Starscount {
     }
 
     function get_init($user_id) {
-        return get_user_meta($user_id, '_starscount_init', true);
+        $starscount = get_user_meta($user_id, '_starscount_init', true);
+        $starscount = ($starscount ? $starscount : 0);
+        return $starscount;
     }
 
     function set_init($user_id, $starscount = 1, $update_current = true) {
@@ -52,10 +75,83 @@ class WP_Starscount {
     }
 
     function get($user_id) {
-        return get_user_meta($user_id, '_starscount', true);
+        $starscount = get_user_meta($user_id, '_starscount', true);
+        $starscount = ($starscount ? $starscount : 0);
+        return $starscount;
     }
 
     function recalc($user_id) {
 
+    }
+
+    function users_admin_columns($columns) {
+        $columns['starscount'] = __('Stars count');
+        return $columns;
+    }
+
+    function users_admin_columns_content($custom_column, $column_name, $user_id) {
+
+        switch($column_name) {
+            case 'starscount':
+                $starscount = WP_Starscount::get($user_id);
+                $custom_column = '<span class="manage-user-starscount" id="manage-user-starscount-user-'.$user_id.'">'.$starscount.'</span>&nbsp;';
+                //@todo show/hide depends on min/max values
+                $custom_column .= '<input type="button" class="user-starscount-increase" id="user-starscount-user-'.$user_id.'-increase" value="+"/>';
+                $custom_column .= '<input type="button" class="user-starscount-decrease" id="user-starscount-user-'.$user_id.'-decrease" value="-"/>';
+                break;
+        }
+
+        return $custom_column;
+    }
+
+    function ajax_change_init() {
+
+        $op = isset($_POST['op']) ? $_POST['op'] : false;
+        $answer = array(
+            'result' => 'false',
+            'error_msg' => '',
+            'msg' => '',
+            'user_id' => ((isset($_POST['user_id'])&&is_numeric($_POST['user_id'])) ? (int)$_POST['user_id'] : false),
+            'allow_increase' => 'unknown',
+            'allow_decrease' => 'unknown',
+        );
+
+        if(!$op) {
+            $answer['error_msg'] = __('Operation not set.');
+            echo json_encode($answer);
+            exit;
+        }
+
+        if(!$answer['user_id']) {
+            $answer['error_msg'] = __('User ID is wrong.');
+            echo json_encode($answer);
+            exit;
+        }
+
+        $starscount = WP_Starscount::get_init($answer['user_id']);
+
+        switch($op) {
+            case 'increase':
+                if($starscount < WP_Starscount::max()) $starscount++;
+                break;
+            case 'decrease':
+                if($starscount > 0) $starscount--;
+                break;
+            default:
+                $answer['error_msg'] = __('Unknown operation.');
+                echo json_encode($answer);
+                exit;
+                break;
+        }
+
+        $answer['allow_increase'] = ($starscount == WP_Starscount::max()) ? 'false' : 'true';
+        $answer['allow_decrease'] = ($starscount == 0) ? 'false' : 'true';
+
+        WP_Starscount::set_init($answer['user_id'], $starscount);
+        $answer['new_value'] = $starscount;
+        $answer['result'] = 'true';
+
+        echo json_encode($answer);
+        exit;
     }
 }
